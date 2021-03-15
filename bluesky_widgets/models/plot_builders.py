@@ -292,7 +292,7 @@ class OffsetLines(Lines):
             label_maker=label_maker,
             needs_streams=needs_streams,
             namespace=namespace,
-            axes=axes
+            axes=axes,
         )
 
         self.run_uid_to_line_offset = dict()
@@ -305,7 +305,9 @@ class OffsetLines(Lines):
             self.run_uid_to_line_offset[run_uid] = previous_run_count * -1.0
 
         transformed_run = super()._transform(run=run, x=x, y=y)
-        transformed_run["y"] = transformed_run["y"].compute() + self.run_uid_to_line_offset[run_uid]
+        transformed_run["y"] = (
+            transformed_run["y"].compute() + self.run_uid_to_line_offset[run_uid]
+        )
         return transformed_run
 
 
