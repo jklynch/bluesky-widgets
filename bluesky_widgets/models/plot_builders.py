@@ -269,131 +269,9 @@ class Lines:
         return self._run_manager._pinned
 
 
-class OffsetLines:
+class OffsetLines(Lines):
     """
     Plot ys vs x in a "waterfall" with each new plot offset from the last.
-
-    This supports plotting columns like ``"I0"`` but also Python
-    expressions like ``"5 * log(I0/It)"`` and even
-    ``"my_custom_function(I0)"``. See examples below. Consult
-    :func:`bluesky_widgets.models.utils.construct_namespace` for details
-    about the available variables.
-
-    Parameters
-    ----------
-    x : String | Callable
-        Field name (e.g. "theta") or expression (e.g. "- deg2rad(theta) / 2")
-        or callable with expected signature::
-
-            f(run: BlueskyRun) -> x: Array
-
-        Other signatures are also supported to allow for a somewhat "magical"
-        usage. See examples below, and also see
-        :func:`bluesky_widgets.models.utils.call_or_eval` for details and more
-        examples.
-
-    ys : List[String | Callable]
-        Field name (e.g. "theta") or expression (e.g. "- deg2rad(theta) / 2")
-        or callable with expected signature::
-
-            f(run: BlueskyRun) -> y: Array
-
-        Other signatures are also supported to allow for a somewhat "magical"
-        usage. See examples below, and also see
-        :func:`bluesky_widgets.models.utils.call_or_eval` for details and more
-        examples.
-
-    max_runs : Integer
-        Number of Runs to visualize at once. Default is 10.
-
-    label_maker : Callable, optional
-        Expected signature::
-
-            f(run: BlueskyRun, y: String) -> label: String
-
-    needs_streams : List[String], optional
-        Streams referred to by x and y. Default is ``["primary"]``
-    namespace : Dict, optional
-        Inject additional tokens to be used in expressions for x and y
-    axes : Axes, optional
-        If None, an axes and figure are created with default labels and titles
-        derived from the ``x`` and ``y`` parameters.
-
-    Attributes
-    ----------
-    max_runs : int
-        Number of Runs to visualize at once. This may be changed at any point.
-        (Note: Increasing it will not restore any Runs that have already been
-        removed, but it will allow more new Runs to be added.) Runs added
-        with ``pinned=True`` are exempt from the limit.
-    runs : RunList[BlueskyRun]
-        As runs are appended entries will be removed from the beginning of the
-        last (first in, first out) so that there are at most ``max_runs``.
-    pinned : Frozenset[String]
-        Run uids of pinned runs.
-    figure : Figure
-    axes : Axes
-    x : String | Callable
-        Read-only access to x
-    ys : Tuple[String | Callable]
-        Read-only access to ys
-    needs_streams : Tuple[String]
-        Read-only access to stream names needed
-    namespace : Dict
-        Read-only access to user-provided namespace
-
-    Examples
-    --------
-
-    Plot "det" vs "motor" and view it.
-
-    >>> model = Lines("motor", ["det"])
-    >>> from bluesky_widgets.jupyter.figures import JupyterFigure
-    >>> view = JupyterFigure(model.figure)
-    >>> model.add_run(run)
-    >>> model.add_run(another_run, pinned=True)
-
-    Plot a mathematical transformation of the columns using any object in
-    numpy. This can be given as a string expression:
-
-    >>> model = Lines("abs(motor)", ["-log(det)"])
-    >>> model = Lines("abs(motor)", ["pi * det"])
-    >>> model = Lines("abs(motor)", ["sqrt(det)"])
-
-    Plot multiple lines.
-
-    >>> model = Lines("motor", ["log(I0/It)", "log(I0)", "log(It)"])
-
-    Plot every tenth point.
-
-    >>> model = Lines("motor", ["intesnity[::10]"])
-
-    Access data outside the "primary" stream, such as a stream name "baseline".
-
-    >>> model = Lines("motor", ["intensity/baseline['intensity'][0]"])
-
-    As shown, objects from numpy can be used in expressions. You may define
-    additional words, such as "savlog" for a Savitzky-Golay smoothing filter,
-    by passing it a dict mapping the new word to the new object.
-
-    >>> import scipy.signal
-    >>> namespace = {"savgol": scipy.signal.savgol_filter}
-    >>> model = Lines("motor", ["savgol(intensity, 5, 2)"],
-    ...                     namespace=namespace)
-
-    Or you may pass in a function. It will be passed parameters according to
-    their names.
-
-    >>> model = Lines("motor", [lambda intensity: savgol(intensity, 5, 2)])
-
-    More examples of this function-based usage:
-
-    >>> model = Lines("abs(motor)", [lambda det: -log(det)])
-    >>> model = Lines("abs(motor)", [lambda det, pi: pi * det])
-    >>> model = Lines("abs(motor)", [lambda det, np: np.sqrt(det)])
-
-    Custom, user-defined objects may be added in the same way, either by adding
-    names to the namespace or providing the functions directly.
     """
 
     def __init__(
@@ -407,124 +285,28 @@ class OffsetLines:
         namespace=None,
         axes=None,
     ):
-        super().__init__()
+        super().__init__(
+            x,
+            ys,
+            max_runs=max_runs,
+            label_maker=label_maker,
+            needs_streams=needs_streams,
+            namespace=namespace,
+            axes=axes
+        )
 
-        if label_maker is None:
-            # scan_id is always generated by RunEngine but not stricter required by
-            # the schema, so we fail gracefully if it is missing.
-
-            if len(ys) > 1:
-
-                def label_maker(run, y):
-                    return (
-                        f"Scan {run.metadata['start'].get('scan_id', '?')} "
-                        f"{auto_label(y)}"
-                    )
-
-            else:
-
-                def label_maker(run, y):
-                    return f"Scan {run.metadata['start'].get('scan_id', '?')}"
-
-        self._x = x
-        if isinstance(ys, str):
-            raise ValueError("`ys` must be a list of strings, not a string")
-        self._ys = tuple(ys)
-        self._label_maker = label_maker
-        self._namespace = namespace
-        if axes is None:
-            axes = Axes(
-                x_label=auto_label(self.x),
-                y_label=", ".join(auto_label(y) for y in self.ys),
-            )
-            figure = Figure((axes,), title=f"{axes.y_label} v {axes.x_label}")
-        else:
-            figure = axes.figure
-        self.axes = axes
-        self.figure = figure
-        # If the Axes' figure is not yet set, listen for it to be set.
-        if figure is None:
-
-            def set_figure(event):
-                self.figure = event.value
-                # This occurs at most once, so we can now stop listening.
-                self.axes.events.figure.disconnect(set_figure)
-
-            self.axes.events.figure.connect(set_figure)
-
-        self._color_cycle = itertools.cycle(f"C{i}" for i in range(10))
-
-        self._run_manager = RunManager(max_runs, needs_streams)
-        self._run_manager.events.run_ready.connect(self._add_lines)
-        self.add_run = self._run_manager.add_run
-        self.discard_run = self._run_manager.discard_run
+        self.run_uid_to_line_offset = dict()
 
     def _transform(self, run, x, y):
-        transformed_run = call_or_eval({"x": x, "y": y}, run, self.needs_streams, self.namespace)
-        # push this line up
-        return transformed_run + 10
+        # for each `run` create and remember an offset
+        run_uid = run.metadata["start"]["uid"]
+        if run_uid not in self.run_uid_to_line_offset:
+            previous_run_count = len(self.run_uid_to_line_offset)
+            self.run_uid_to_line_offset[run_uid] = previous_run_count * -1.0
 
-    def _add_lines(self, event):
-        "Add a line."
-        run = event.run
-        for y in self.ys:
-            label = self._label_maker(run, y)
-            # If run is in progress, give it a special color so it stands out.
-            if run_is_live_and_not_completed(run):
-                color = "black"
-
-                def restyle_line_when_complete(event):
-                    "When run is complete, update style."
-                    line.style.update({"color": next(self._color_cycle)})
-
-                run.events.completed.connect(restyle_line_when_complete)
-            else:
-                color = next(self._color_cycle)
-            style = {"color": color}
-
-            # Style pinned runs differently.
-            if run.metadata["start"]["uid"] in self.pinned:
-                style.update(linestyle="dashed")
-                label += " (pinned)"
-
-            func = functools.partial(self._transform, x=self.x, y=y)
-            line = Line.from_run(func, run, label, style)
-            self._run_manager.track_artist(line, [run])
-            self.axes.artists.append(line)
-
-    @property
-    def x(self):
-        return self._x
-
-    @property
-    def ys(self):
-        return self._ys
-
-    @property
-    def namespace(self):
-        return DictView(self._namespace or {})
-
-    # Expose some properties from the internal RunManger helper class.
-
-    @property
-    def runs(self):
-        return self._run_manager.runs
-
-    @property
-    def max_runs(self):
-        return self._run_manager.max_runs
-
-    @max_runs.setter
-    def max_runs(self, value):
-        self._run_manager.max_runs = value
-
-    @property
-    def needs_streams(self):
-        return self._run_manager._needs_streams
-
-    @property
-    def pinned(self):
-        return self._run_manager._pinned
+        transformed_run = super()._transform(run=run, x=x, y=y)
+        transformed_run["y"] = transformed_run["y"].compute() + self.run_uid_to_line_offset[run_uid]
+        return transformed_run
 
 
 class Images:
